@@ -5,11 +5,11 @@ import akka.stream.ActorMaterializer
 import gql.Game.TerisGameHolder
 
 object GameServer extends Runnable {
-  override def run(): Unit = {
-    implicit val system: ActorSystem = ActorSystem("game-server-system")
-    implicit val materializer: ActorMaterializer = ActorMaterializer()
-    implicit val executionContext = system.dispatcher
+  implicit val system: ActorSystem = ActorSystem("game-server-system")
+  implicit val materializer: ActorMaterializer = ActorMaterializer()
+  implicit val executionContext = system.dispatcher
 
+  override def run(): Unit = {
     // 初始化游戏逻辑
     TerisGameHolder.init()
 

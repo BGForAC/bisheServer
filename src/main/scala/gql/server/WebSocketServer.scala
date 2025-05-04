@@ -1,61 +1,111 @@
 package gql.server
 
-import akka.actor.{ActorSystem, Cancellable}
+import akka.actor.{ActorRef, ActorSystem}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.ws.{Message, TextMessage}
 import akka.http.scaladsl.server.Directives._
-import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Flow, Sink, Source}
+import akka.stream.{ActorMaterializer, OverflowStrategy}
+import gql.Game.TerisGameHolder
 
-import scala.concurrent.duration._
+import java.util.UUID
+import scala.collection.concurrent.TrieMap
 import scala.concurrent.ExecutionContext
-import scala.collection.mutable
+import scala.concurrent.duration._
 
 object WebSocketServer {
-  private val connections = mutable.Set[Sink[Message, Any]]()
+  val connections = TrieMap[String, ActorRef]()
+
+  def sendMessageToClient(clientId: String, message: String): Unit = {
+    connections.get(clientId) match {
+      case Some(actorRef) =>
+        actorRef ! TextMessage(message)
+      case None =>
+        println(s"Client $clientId not found in connections")
+    }
+  }
 
   def start()(implicit system: ActorSystem, materializer: ActorMaterializer, executionContext: ExecutionContext): Unit = {
-    // WebSocket handler
-    val websocketHandler: Flow[Message, Message, Any] = Flow[Message]
-      .map {
+    def createWebsocketHandler(clientId: String): Flow[Message, Message, Any] = {
+      val outgoingMessages: Source[Message, ActorRef] =
+        Source.actorRef[Message](bufferSize = 10, OverflowStrategy.dropHead)
+          .mapMaterializedValue { actorRef =>
+            connections.put(clientId, actorRef)
+            actorRef
+          }
+
+      val incomingMessages: Sink[Message, Any] = Sink.foreach {
         case TextMessage.Strict(text) =>
-          TextMessage(s"Server received: $text")
+          text match {
+            case "left" =>
+              TerisGameHolder.moveLeft(clientId)
+              sendMessageToClient(clientId, "moving left")
+            case "right" =>
+              TerisGameHolder.moveRight(clientId)
+              sendMessageToClient(clientId, "moving right")
+            case "drop" =>
+              TerisGameHolder.drop(clientId)
+              sendMessageToClient(clientId, "dropping")
+            case "land" =>
+              TerisGameHolder.onLand(clientId)
+              sendMessageToClient(clientId, "landing")
+            case "rotate" =>
+              TerisGameHolder.rotate(clientId)
+              sendMessageToClient(clientId, "rotating")
+            case "gen" =>
+              val number = TerisGameHolder.generateRandomBlock(clientId)
+              sendMessageToClient(clientId, "teris:" + number)
+            case "clear" =>
+              TerisGameHolder.checkRow(clientId)
+              sendMessageToClient(clientId, "clear")
+            case _ =>
+              sendMessageToClient(clientId, "Unknown command" + text)
+          }
         case _ =>
           TextMessage("Unsupported message type")
       }
-      .alsoTo(Sink.foreach { message =>
-        // Register connections
-        connections.add(Sink.ignore)
-      })
 
-    // Define the route
+      Flow.fromSinkAndSource(incomingMessages, outgoingMessages)
+    }
+
     val route =
       path("ws") {
-        handleWebSocketMessages(websocketHandler)
+        extractClientIP { clientIP =>
+          handleWebSocketMessages {
+            //            val clientId = clientIP.toOption.map(_.getHostAddress).getOrElse("unknown")
+            val clientId = UUID.randomUUID().toString
+            val flow = createWebsocketHandler(clientId)
+            TerisGameHolder.addPlayer(clientId)
+            println(s"Client connected: $clientId")
+            flow
+          }
+        }
       }
 
-    // Start the server
     val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
     println(s"WebSocket server online at ws://localhost:8080/ws")
 
-    // Start heartbeat
-    startHeartbeat()
+    system.scheduler.scheduleWithFixedDelay(initialDelay = 0.seconds, delay = 5.seconds) {
+      () => heartbeat()
+    }(GameServer.executionContext)
 
-    while(true) {}
+    system.scheduler.scheduleWithFixedDelay(initialDelay = 0.seconds, delay = 5.seconds) {
+      () => TerisGameHolder.matching()
+    }(GameServer.executionContext)
+
+    while (true) {}
 
     bindingFuture
       .flatMap(_.unbind())
       .onComplete(_ => system.terminate())
 
-    def startHeartbeat()(implicit system: ActorSystem): Cancellable = {
-      system.scheduler.scheduleAtFixedRate(1.second, 1.second) { () =>
-        val heartbeatMessage = TextMessage("Heartbeat")
-        connections.foreach { connection =>
-          connection.runWith(Source.single(heartbeatMessage))
-        }
+    def heartbeat(): Unit = {
+      connections.foreach { case (clientId, actorRef) =>
+        actorRef ! TextMessage("heartbeat")
+        val playersId = TerisGameHolder.games.flatMap(_.games.keys) ++ TerisGameHolder.players.map(_.id)
+        // 打印当前连接的玩家ID
+        println(s"Heartbeat: 当前玩家数量: ${playersId.size}, 玩家ID: ${playersId.mkString(", ")}")
       }
     }
-
   }
-
 }

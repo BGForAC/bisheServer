@@ -1,5 +1,3 @@
 package gql.entity
 
-class Player(val id: String) {
-
-}
+case class Player(id: String)

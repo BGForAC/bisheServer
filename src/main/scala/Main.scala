@@ -4,5 +4,4 @@ object Main {
   def main(args: Array[String]): Unit = {
     GameServer.run()
   }
-
 }

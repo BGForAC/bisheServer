@@ -1,15 +1,21 @@
 package gql.Game
 
 import gql.entity.Player
+import gql.server.WebSocketServer
+
 import scala.collection.mutable
 
 object TerisGameHolder {
 
-  private val games: mutable.ListBuffer[TerisGame] = mutable.ListBuffer()
+  val games: mutable.ListBuffer[TerisGame] = mutable.ListBuffer()
   val players: mutable.ListBuffer[Player] = mutable.ListBuffer()
 
   def init(): Unit = {
 
+  }
+
+  def log(str: String): Unit = {
+    println("TerisGameHold:" + str)
   }
 
   def addPlayer(playerId: String): Unit = {
@@ -22,7 +28,7 @@ object TerisGameHolder {
         players -= player
         games.find(_.players.exists(_.id == playerId)) match {
           case Some(game) =>
-            // 处理玩家中途退出游戏
+          // 处理玩家中途退出游戏
           case None =>
         }
       case None =>
@@ -30,11 +36,17 @@ object TerisGameHolder {
   }
 
   def matching(): Unit = {
+    log("尝试匹配, 当前匹配玩家数: " + players.size)
     while (players.size >= 2) {
-      val player1 = players.remove(0)
-      val player2 = players.remove(0)
-      val game = new TerisGame(List(player1, player2))
-      games += game
+      log("匹配成功，开始游戏")
+      // 取出前两个玩家进行匹配
+      val gamers = List(players.remove(0), players.remove(0))
+      games += new TerisGame(gamers)
+      gamers.foreach(player => {
+        log(s"玩家 ${player.id} 进入游戏")
+        WebSocketServer.sendMessageToClient(player.id, "匹配成功，进入游戏")
+        WebSocketServer.sendMessageToClient(player.id, "teris:" + TerisGameHolder.generateRandomBlock(player.id))
+      })
     }
   }
 
@@ -46,39 +58,36 @@ object TerisGameHolder {
     games.find(_.players.exists(_.id == playerId))
   }
 
-  def moveLeft(playerId: String): Unit = {
+  // 操作模板
+  private def actionTemplate(playerId: String, logicName: String): Unit = {
     getGameByPlayerId(playerId) match {
       case Some(game) =>
-        game.moveLeft(playerId)
+        game.getClass.getMethod(logicName, classOf[String]).invoke(game, playerId)
       case None =>
-        println(s"玩家 $playerId 不在任何游戏中")
+        log(s"玩家 $playerId 不在任何游戏中")
+        throw new Exception("玩家不在任何游戏中")
     }
   }
 
-  def moveRight(playerId: String): Unit = {
-    getGameByPlayerId(playerId) match {
-      case Some(game) =>
-        game.moveRight(playerId)
-      case None =>
-        println(s"玩家 $playerId 不在任何游戏中")
-    }
-  }
+  def moveLeft(playerId: String): Unit = actionTemplate(playerId, "moveLeft")
 
-  def rotate(playerId: String): Unit = {
-    getGameByPlayerId(playerId) match {
-      case Some(game) =>
-        game.rotate(playerId)
-      case None =>
-        println(s"玩家 $playerId 不在任何游戏中")
-    }
-  }
+  def moveRight(playerId: String): Unit = actionTemplate(playerId, "moveRight")
 
-  def onLand(playerId: String): Unit = {
+  def rotate(playerId: String): Unit = actionTemplate(playerId, "rotate")
+
+  def drop(playerId: String): Unit = actionTemplate(playerId, "drop")
+
+  def onLand(playerId: String): Unit = actionTemplate(playerId, "onLand")
+
+  def checkRow(playerId: String): Unit = actionTemplate(playerId, "checkRow")
+
+  def generateRandomBlock(playerId: String): Int = {
     getGameByPlayerId(playerId) match {
       case Some(game) =>
-        game.onLand(playerId)
+        game.generateRandomBlock(playerId)
       case None =>
-        println(s"玩家 $playerId 不在任何游戏中")
+        log(s"玩家 $playerId 不在任何游戏中")
+        throw new Exception("玩家不在任何游戏中")
     }
   }
 }

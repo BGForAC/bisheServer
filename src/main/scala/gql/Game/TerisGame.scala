@@ -1,76 +1,93 @@
 package gql.Game
 
 import gql.entity.Player
+import gql.server.WebSocketServer
+
 import scala.collection.mutable
 
 // 一局游戏有多个玩家，棋盘彼此独立
-class TerisGame(val players: List[Player]) {
+class TerisGame {
+  val players = mutable.ListBuffer[Player]()
 
-  private val games = mutable.Map[String, Teris]()
-
-  init()
+  val games = mutable.Map[String, Teris]()
 
   def log(str: String): Unit = {
-    println(str)
+    println("TerisGame:" + str)
   }
 
-  def init(): Unit = {
-    games.put(players(0).id, new Teris(this))
-    games.put(players(1).id, new Teris(this))
-  }
-
-  def moveLeft(playerId: String): Unit = {
-    games.get(playerId) match {
-      case Some(game) =>
-        // 执行向左移动的逻辑
-        log(s"玩家 $playerId 向左移动")
-        game.moveLeft()
-      case None =>
-        log(s"玩家 $playerId 的游戏不存在")
+  def this(players: List[Player]) = {
+    this()
+    log("初始化游戏")
+    this.players ++= players
+    players.foreach { player =>
+      log(s"初始化玩家 ${player.id} 的游戏")
+      // 初始化游戏逻辑
+      games.put(player.id, new Teris(this, player.id))
     }
   }
 
-  def moveRight(playerId: String): Unit = {
+  // 无参操作模板
+  private def npActionTemplate(playerId: String, operationName: String, logicName: String): Unit = {
     games.get(playerId) match {
       case Some(game) =>
-        // 执行向右移动的逻辑
-        log(s"玩家 $playerId 向右移动")
-        game.moveRight()
+        // 执行游戏逻辑
+        log(s"玩家 $playerId 执行游戏逻辑: $operationName")
+        // 反射调用游戏逻辑
+        game.getClass.getMethod(logicName).invoke(game)
       case None =>
         log(s"玩家 $playerId 的游戏不存在")
     }
+    // 通知游戏内的其他玩家
+    notifyOthers(playerId, operationName, logicName)
   }
 
-  def rotate(playerId: String): Unit = {
-    games.get(playerId) match {
-      case Some(game) =>
-        // 执行旋转的逻辑
-        log(s"玩家 $playerId 旋转")
-        game.rotate()
-      case None =>
-        log(s"玩家 $playerId 的游戏不存在")
+  def notifyOthers(playerId: String, operationName: String, message: String): Unit = {
+    players.filter(_.id != playerId).foreach { player =>
+      log(s"通知玩家 ${player.id} 玩家 $playerId 执行游戏逻辑: $operationName")
+      WebSocketServer.connections.get(player.id) match {
+        case Some(connection) =>
+          WebSocketServer.sendMessageToClient(player.id, s"e $message")
+        case None =>
+          log(s"玩家 ${player.id} 的连接不存在")
+      }
     }
   }
 
-  def onLand(playerId: String): Unit = {
-    games.get(playerId) match {
-      case Some(game) =>
-        // 执行落地的逻辑
-        log(s"玩家 $playerId 落地")
-        game.onLand()
-      case None =>
-        log(s"玩家 $playerId 的游戏不存在")
-    }
-  }
+  def moveLeft(playerId: String): Unit = npActionTemplate(playerId, "左移", "moveLeft")
 
-  def generateRandomBlock(playerId: String): Unit = {
+  def moveRight(playerId: String): Unit = npActionTemplate(playerId, "右移", "moveRight")
+
+  def rotate(playerId: String): Unit = npActionTemplate(playerId, "旋转", "rotate")
+
+  def onLand(playerId: String): Unit = npActionTemplate(playerId, "落地", "onLand")
+
+  def drop(playerId: String): Unit = npActionTemplate(playerId, "下落", "drop")
+
+  def checkRow(playerId: String): Unit = npActionTemplate(playerId, "检查行", "checkRow")
+
+  def clearRow(playerId: String, row: Int): Unit = notifyOthers(playerId, "清除行", "clearRow:" + row)
+
+  def generateRandomBlock(playerId: String): Int = {
+    var number: Int = -1
     games.get(playerId) match {
       case Some(game) =>
         // 生成随机方块的逻辑
         log(s"玩家 $playerId 生成随机方块")
-        game.generateRandomTeris()
+        number = game.generateRandomTeris()
       case None =>
         log(s"玩家 $playerId 的游戏不存在")
+        throw new Exception("玩家不存在")
     }
+    // 通知游戏内的其他玩家
+    players.filter(_.id != playerId).foreach { player =>
+      log(s"通知玩家 ${player.id} 玩家 $playerId 生成随机方块")
+      WebSocketServer.connections.get(player.id) match {
+        case Some(connection) =>
+          WebSocketServer.sendMessageToClient(player.id, s"e teris:$number")
+        case None =>
+          log(s"玩家 ${player.id} 的连接不存在")
+      }
+    }
+    number
   }
 }
