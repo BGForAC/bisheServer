@@ -15,11 +15,11 @@ object TerisGameHolder {
   }
 
   def log(str: String): Unit = {
-    println("TerisGameHold:" + str)
+    println("TerisGameHolder:" + str)
   }
 
   def addPlayer(playerId: String): Unit = {
-    players += new Player(playerId)
+    players += Player(playerId)
   }
 
   def removePlayer(playerId: String): Unit = {
@@ -80,6 +80,8 @@ object TerisGameHolder {
   def onLand(playerId: String): Unit = actionTemplate(playerId, "onLand")
 
   def checkRow(playerId: String): Unit = actionTemplate(playerId, "checkRow")
+
+  def gameOver(playerId: String): Unit = actionTemplate(playerId, "gameOver")
 
   def generateRandomBlock(playerId: String): Int = {
     getGameByPlayerId(playerId) match {

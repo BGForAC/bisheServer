@@ -18,18 +18,27 @@ class Teris {
   private var offsetX: Int = _
   private var offsetY: Int = _
 
+  private var over: Boolean = false
+
   def this(game: TerisGame) = {
     this()
     this.game = game
     // 初始化游戏状态
     grids = Array.fill(WIDTH + 1, HEIGHT + 2)(0)
     point = 0
-    generateRandomTeris()
   }
 
   def this(game: TerisGame, playerId: String) = {
     this(game)
     this.playerId = playerId
+  }
+
+  def isOver(): Boolean = {
+    over
+  }
+
+  def gameOver(): Unit = {
+    over = true
   }
 
   def generateRandomTeris(): Int = {
@@ -38,6 +47,9 @@ class Teris {
     currentTeris = new Block(number, BIRTH_POINT)
     offsetX = 0
     offsetY = 0
+    if (outOfRange(currentTeris)) {
+      return -1 * number
+    }
     number
   }
 
@@ -61,12 +73,22 @@ class Teris {
     offsetY -= 1
   }
 
+  def outOfRange(block: Block): Boolean = {
+    for (child <- block.childsPostions) {
+      val (x, y) = child
+      if (x + offsetX <= 0 || x + offsetX > WIDTH || y + offsetY <= 0) {
+        return true
+      }
+    }
+    false
+  }
+
   def onLand(): Unit = {
     // 执行落地的逻辑
     // 将当前方块固定到棋盘上
     for (child <- currentTeris.childsPostions) {
       val (x, y) = child
-      if (x + offsetX <= 0 || x + offsetX > WIDTH || y + offsetY <= 0) {
+      if (x + offsetX <= 0 || x + offsetX > WIDTH || y + offsetY <= 0 || grids(x + offsetX)(y + offsetY) == 1) {
         throw new Exception("客户端越界了")
       }
       grids(x + offsetX)(y + offsetY) = 1
@@ -118,7 +140,7 @@ class Teris {
   }
 
   private def clearRow(row: Int): Unit = {
-    game.clearRow(playerId, row)
+    game.clearNotification(playerId, row)
     // 执行消除行的逻辑
     for (j <- row to HEIGHT) {
       for (i <- 1 to WIDTH) {

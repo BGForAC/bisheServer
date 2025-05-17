@@ -37,6 +37,12 @@ object WebSocketServer {
       val incomingMessages: Sink[Message, Any] = Sink.foreach {
         case TextMessage.Strict(text) =>
           text match {
+//            case "login" + clientId =>
+//              if (TerisGameHolder.checkPlayer(playerId)){
+//
+//              } else {
+//                TerisGameHolder.login()
+//              }
             case "left" =>
               TerisGameHolder.moveLeft(clientId)
               sendMessageToClient(clientId, "moving left")
@@ -54,7 +60,11 @@ object WebSocketServer {
               sendMessageToClient(clientId, "rotating")
             case "gen" =>
               val number = TerisGameHolder.generateRandomBlock(clientId)
-              sendMessageToClient(clientId, "teris:" + number)
+              sendMessageToClient(clientId, "teris:" + Math.abs(number))
+              if (number < 0) {
+                sendMessageToClient(clientId, "gameOver")
+                TerisGameHolder.gameOver(clientId)
+              }
             case "clear" =>
               TerisGameHolder.checkRow(clientId)
               sendMessageToClient(clientId, "clear")
@@ -72,7 +82,6 @@ object WebSocketServer {
       path("ws") {
         extractClientIP { clientIP =>
           handleWebSocketMessages {
-            //            val clientId = clientIP.toOption.map(_.getHostAddress).getOrElse("unknown")
             val clientId = UUID.randomUUID().toString
             val flow = createWebsocketHandler(clientId)
             TerisGameHolder.addPlayer(clientId)

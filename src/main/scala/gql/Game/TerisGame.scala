@@ -30,6 +30,10 @@ class TerisGame {
   private def npActionTemplate(playerId: String, operationName: String, logicName: String): Unit = {
     games.get(playerId) match {
       case Some(game) =>
+        if (game.isOver()) {
+          log(s"玩家 $playerId 在游戏结束后出现操作")
+          return
+        }
         // 执行游戏逻辑
         log(s"玩家 $playerId 执行游戏逻辑: $operationName")
         // 反射调用游戏逻辑
@@ -65,10 +69,12 @@ class TerisGame {
 
   def checkRow(playerId: String): Unit = npActionTemplate(playerId, "检查行", "checkRow")
 
-  def clearRow(playerId: String, row: Int): Unit = notifyOthers(playerId, "清除行", "clearRow:" + row)
+  def gameOver(playerId: String): Unit = npActionTemplate(playerId, "游戏结束", "gameOver")
+
+  def clearNotification(playerId: String, row: Int): Unit = notifyOthers(playerId, "清除行", "clearRow:" + row)
 
   def generateRandomBlock(playerId: String): Int = {
-    var number: Int = -1
+    var number: Int = 0
     games.get(playerId) match {
       case Some(game) =>
         // 生成随机方块的逻辑
@@ -83,7 +89,7 @@ class TerisGame {
       log(s"通知玩家 ${player.id} 玩家 $playerId 生成随机方块")
       WebSocketServer.connections.get(player.id) match {
         case Some(connection) =>
-          WebSocketServer.sendMessageToClient(player.id, s"e teris:$number")
+          WebSocketServer.sendMessageToClient(player.id, s"e teris:${Math.abs(number)}")
         case None =>
           log(s"玩家 ${player.id} 的连接不存在")
       }
