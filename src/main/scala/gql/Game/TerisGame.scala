@@ -1,6 +1,6 @@
 package gql.Game
 
-import gql.entity.Player
+import gql.entity.{Player, SendMessageType}
 import gql.server.WebSocketServer
 
 import scala.collection.mutable
@@ -13,6 +13,17 @@ class TerisGame {
 
   def log(str: String): Unit = {
     println("TerisGame:" + str)
+  }
+
+  def onDestory(): Unit = {
+    log("销毁游戏, 打印游戏结果")
+    val scores = games.map { case (playerId, game) =>
+      val score = game.point
+      playerId -> score
+    }.toSeq
+    scores.sortBy(_._2).reverse.foreach { case (playerId, score) =>
+      log(s"玩家 $playerId 的分数: $score")
+    }
   }
 
   def this(players: List[Player]) = {
@@ -45,15 +56,10 @@ class TerisGame {
     notifyOthers(playerId, operationName, logicName)
   }
 
-  def notifyOthers(playerId: String, operationName: String, message: String): Unit = {
+  def notifyOthers(playerId: String, operationName: String, logicName: String): Unit = {
     players.filter(_.id != playerId).foreach { player =>
       log(s"通知玩家 ${player.id} 玩家 $playerId 执行游戏逻辑: $operationName")
-      WebSocketServer.connections.get(player.id) match {
-        case Some(connection) =>
-          WebSocketServer.sendMessageToClient(player.id, s"e $message")
-        case None =>
-          log(s"玩家 ${player.id} 的连接不存在")
-      }
+      WebSocketServer.sendMessageToClient(player.id, SendMessageType.OPPONENT_OPERATION(playerId, logicName))
     }
   }
 
@@ -82,17 +88,11 @@ class TerisGame {
         number = game.generateRandomTeris()
       case None =>
         log(s"玩家 $playerId 的游戏不存在")
-        throw new Exception("玩家不存在")
     }
     // 通知游戏内的其他玩家
     players.filter(_.id != playerId).foreach { player =>
       log(s"通知玩家 ${player.id} 玩家 $playerId 生成随机方块")
-      WebSocketServer.connections.get(player.id) match {
-        case Some(connection) =>
-          WebSocketServer.sendMessageToClient(player.id, s"e teris:${Math.abs(number)}")
-        case None =>
-          log(s"玩家 ${player.id} 的连接不存在")
-      }
+      WebSocketServer.sendMessageToClient(player.id, SendMessageType.OPPONENT_OPERATION(playerId, SendMessageType.GEN(number)))
     }
     number
   }

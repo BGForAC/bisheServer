@@ -7,6 +7,7 @@ import akka.http.scaladsl.server.Directives._
 import akka.stream.scaladsl.{Flow, Sink, Source}
 import akka.stream.{ActorMaterializer, OverflowStrategy}
 import gql.Game.TerisGameHolder
+import gql.entity.{ReceivedMessageType, SendMessageType}
 
 import java.util.UUID
 import scala.collection.concurrent.TrieMap
@@ -14,10 +15,18 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
 object WebSocketServer {
+  // 连接名到ActorRef的映射
   val connections = TrieMap[String, ActorRef]()
+  // 连接名到账号名的映射
+  val accounts = TrieMap[String, String]()
 
   def sendMessageToClient(clientId: String, message: String): Unit = {
-    connections.get(clientId) match {
+    def connectionId: String = {
+      if (!accounts.exists(_._2 == clientId)) return ""
+      accounts.filter(_._2 == clientId).head._1
+    }
+
+    connections.get(connectionId) match {
       case Some(actorRef) =>
         actorRef ! TextMessage(message)
       case None =>
@@ -25,54 +34,43 @@ object WebSocketServer {
     }
   }
 
+  def log(message: String): Unit = {
+    println(message)
+  }
+
   def start()(implicit system: ActorSystem, materializer: ActorMaterializer, executionContext: ExecutionContext): Unit = {
-    def createWebsocketHandler(clientId: String): Flow[Message, Message, Any] = {
+
+    def createWebsocketHandler(connectionId: String): Flow[Message, Message, Any] = {
+      def clientId: String = {
+        accounts.getOrElse(connectionId, "")
+      }
+
       val outgoingMessages: Source[Message, ActorRef] =
         Source.actorRef[Message](bufferSize = 10, OverflowStrategy.dropHead)
           .mapMaterializedValue { actorRef =>
-            connections.put(clientId, actorRef)
+            connections.put(connectionId, actorRef)
             actorRef
           }
 
       val incomingMessages: Sink[Message, Any] = Sink.foreach {
         case TextMessage.Strict(text) =>
           text match {
-//            case "login" + clientId =>
-//              if (TerisGameHolder.checkPlayer(playerId)){
-//
-//              } else {
-//                TerisGameHolder.login()
-//              }
-            case "left" =>
-              TerisGameHolder.moveLeft(clientId)
-              sendMessageToClient(clientId, "moving left")
-            case "right" =>
-              TerisGameHolder.moveRight(clientId)
-              sendMessageToClient(clientId, "moving right")
-            case "drop" =>
-              TerisGameHolder.drop(clientId)
-              sendMessageToClient(clientId, "dropping")
-            case "land" =>
-              TerisGameHolder.onLand(clientId)
-              sendMessageToClient(clientId, "landing")
-            case "rotate" =>
-              TerisGameHolder.rotate(clientId)
-              sendMessageToClient(clientId, "rotating")
-            case "gen" =>
-              val number = TerisGameHolder.generateRandomBlock(clientId)
-              sendMessageToClient(clientId, "teris:" + Math.abs(number))
-              if (number < 0) {
-                sendMessageToClient(clientId, "gameOver")
-                TerisGameHolder.gameOver(clientId)
+            case message if message.startsWith("login") =>
+              log("收到登录请求：" + text)
+              val clientId = message.split(" ")(1)
+              if (TerisGameHolder.validPlayer(clientId)) {
+                accounts.put(connectionId, clientId)
+                sendMessageToClient(clientId, SendMessageType.LOGIN_SUCCESS)
+                log(s"玩家 $clientId 登录成功")
+              } else {
+                sendMessageToClient(clientId, SendMessageType.LOGIN_FAIL)
+                log(s"玩家 $clientId 试图重复登陆")
               }
-            case "clear" =>
-              TerisGameHolder.checkRow(clientId)
-              sendMessageToClient(clientId, "clear")
             case _ =>
-              sendMessageToClient(clientId, "Unknown command" + text)
+              TerisGameHolder.handleMessage(clientId, text)
           }
         case _ =>
-          TextMessage("Unsupported message type")
+          sendMessageToClient(clientId, SendMessageType.UNKNOWN_TYPE)
       }
 
       Flow.fromSinkAndSource(incomingMessages, outgoingMessages)
@@ -82,10 +80,9 @@ object WebSocketServer {
       path("ws") {
         extractClientIP { clientIP =>
           handleWebSocketMessages {
-            val clientId = UUID.randomUUID().toString
-            val flow = createWebsocketHandler(clientId)
-            TerisGameHolder.addPlayer(clientId)
-            println(s"Client connected: $clientId")
+            val connectionId = UUID.randomUUID().toString
+            val flow = createWebsocketHandler(connectionId)
+            println(s"Client connected: $connectionId")
             flow
           }
         }
@@ -98,7 +95,7 @@ object WebSocketServer {
       () => heartbeat()
     }(GameServer.executionContext)
 
-    system.scheduler.scheduleWithFixedDelay(initialDelay = 0.seconds, delay = 5.seconds) {
+    system.scheduler.scheduleWithFixedDelay(initialDelay = 0.seconds, delay = 1.seconds) {
       () => TerisGameHolder.matching()
     }(GameServer.executionContext)
 
@@ -109,12 +106,13 @@ object WebSocketServer {
       .onComplete(_ => system.terminate())
 
     def heartbeat(): Unit = {
-      connections.foreach { case (clientId, actorRef) =>
+      connections.foreach { case (connectionId, actorRef) =>
         actorRef ! TextMessage("heartbeat")
-        val playersId = TerisGameHolder.games.flatMap(_.games.keys) ++ TerisGameHolder.players.map(_.id)
-        // 打印当前连接的玩家ID
-        println(s"Heartbeat: 当前玩家数量: ${playersId.size}, 玩家ID: ${playersId.mkString(", ")}")
       }
+      // 打印当前连接的玩家ID
+      val playersId = TerisGameHolder.allPlayers()
+      println(s"Heartbeat: 当前正在匹配的玩家数量: ${playersId.size}, 玩家ID: ${playersId.mkString(", ")}")
+      println(s"Heartbeat: 当前连接的数量：${connections.size}, 当前登录的玩家数量: ${accounts.size}, 玩家ID: ${accounts.values.mkString(", ")}")
     }
   }
 }

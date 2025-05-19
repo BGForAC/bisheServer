@@ -1,31 +1,85 @@
 package gql.Game
 
-import gql.entity.Player
+import gql.entity.{Player, ReceivedMessageType, SendMessageType}
 import gql.server.WebSocketServer
 
 import scala.collection.mutable
 
 object TerisGameHolder {
+  var games: mutable.ListBuffer[TerisGame] = _
+  var queue: mutable.ListBuffer[Player] = _
 
-  val games: mutable.ListBuffer[TerisGame] = mutable.ListBuffer()
-  val players: mutable.ListBuffer[Player] = mutable.ListBuffer()
+  def allPlayers(): mutable.ListBuffer[String] = {
+    games.flatMap(_.games.keys) ++ queue.map(_.id)
+  }
+
+  def validPlayer(playerId: String): Boolean = {
+    !allPlayers().contains(playerId)
+  }
 
   def init(): Unit = {
+    games = mutable.ListBuffer[TerisGame]()
+    queue = mutable.ListBuffer[Player]()
+  }
 
+  def handleMessage(playerId: String, message: String): Unit = {
+    message match {
+      case ReceivedMessageType.START_MATCH =>
+        enqueuePlayer(playerId)
+      case ReceivedMessageType.CANCEL_MATCH =>
+        dequeuePlayer(playerId)
+      case ReceivedMessageType.LEFT =>
+        moveLeft(playerId)
+      case ReceivedMessageType.RIGHT =>
+        moveRight(playerId)
+      case ReceivedMessageType.DROP =>
+        drop(playerId)
+      case ReceivedMessageType.LAND =>
+        onLand(playerId)
+      case ReceivedMessageType.ROTATE =>
+        rotate(playerId)
+      case ReceivedMessageType.GEN =>
+        val number = generateRandomBlock(playerId)
+        WebSocketServer.sendMessageToClient(playerId, SendMessageType.GEN(number))
+        if (number < 0) {
+          log(s"玩家 $playerId 游戏结束")
+          gameOver(playerId)
+          WebSocketServer.sendMessageToClient(playerId, SendMessageType.GAME_OVER)
+          val game = getGameByPlayerId(playerId).get
+          if (game.games.forall(_._2.isOver())) {
+            game.onDestory()
+            removeGame(game)
+          }
+        }
+      case ReceivedMessageType.CHECK =>
+        checkRow(playerId)
+      case _ =>
+        log(s"收到未知消息: $message")
+        throw new Exception("服务器收到了未知类型消息")
+    }
   }
 
   def log(str: String): Unit = {
     println("TerisGameHolder:" + str)
   }
 
-  def addPlayer(playerId: String): Unit = {
-    players += Player(playerId)
+  private def enqueuePlayer(playerId: String): Unit = {
+    queue += Player(playerId)
+  }
+
+  private def dequeuePlayer(playerId: String): Unit = {
+    queue.find(_.id == playerId) match {
+      case Some(player) =>
+        queue -= player
+      case None =>
+        log(s"玩家 $playerId 已不在匹配队列中")
+    }
   }
 
   def removePlayer(playerId: String): Unit = {
-    players.find(_.id == playerId) match {
+    queue.find(_.id == playerId) match {
       case Some(player) =>
-        players -= player
+        queue -= player
         games.find(_.players.exists(_.id == playerId)) match {
           case Some(game) =>
           // 处理玩家中途退出游戏
@@ -36,16 +90,21 @@ object TerisGameHolder {
   }
 
   def matching(): Unit = {
-    log("尝试匹配, 当前匹配玩家数: " + players.size)
-    while (players.size >= 2) {
+    log("尝试匹配, 当前匹配玩家数: " + queue.size)
+    while (queue.size >= 3) {
       log("匹配成功，开始游戏")
       // 取出前两个玩家进行匹配
-      val gamers = List(players.remove(0), players.remove(0))
+      val gamers = List(queue.remove(0), queue.remove(0), queue.remove(0))
       games += new TerisGame(gamers)
       gamers.foreach(player => {
         log(s"玩家 ${player.id} 进入游戏")
-        WebSocketServer.sendMessageToClient(player.id, "匹配成功，进入游戏")
-        WebSocketServer.sendMessageToClient(player.id, "teris:" + TerisGameHolder.generateRandomBlock(player.id))
+        val message: String = SendMessageType.MATCH_SUCCESS + " " + gamers.filter(_.id != player.id).map(_.id).mkString(",")
+        WebSocketServer.sendMessageToClient(player.id, message)
+      })
+      // 等待2s再开始游戏
+      Thread.sleep(1000)
+      gamers.foreach(player => {
+        WebSocketServer.sendMessageToClient(player.id, SendMessageType.GEN(generateRandomBlock(player.id)))
       })
     }
   }

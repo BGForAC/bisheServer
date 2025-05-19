@@ -14,9 +14,10 @@ class Teris {
 
   private var grids: Array[Array[Int]] = _
   private var currentTeris: Block = _
-  private var point: Int = _
+  var point: Int = _
   private var offsetX: Int = _
   private var offsetY: Int = _
+  private var lastDropTime: Long = _
 
   private var over: Boolean = false
 
@@ -42,6 +43,7 @@ class Teris {
   }
 
   def generateRandomTeris(): Int = {
+    lastDropTime = System.currentTimeMillis()
     val number = Random.nextInt(7) + 1
     // 生成随机的方块
     currentTeris = new Block(number, BIRTH_POINT)
@@ -76,7 +78,7 @@ class Teris {
   def outOfRange(block: Block): Boolean = {
     for (child <- block.childsPostions) {
       val (x, y) = child
-      if (x + offsetX <= 0 || x + offsetX > WIDTH || y + offsetY <= 0) {
+      if (x + offsetX <= 0 || x + offsetX > WIDTH || y + offsetY <= 0 || grids(x + offsetX)(y + offsetY) == 1) {
         return true
       }
     }
