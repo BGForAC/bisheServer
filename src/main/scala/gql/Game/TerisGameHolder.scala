@@ -22,6 +22,14 @@ object TerisGameHolder {
     queue = mutable.ListBuffer[Player]()
   }
 
+  def isInQueue(playerId: String): Boolean = {
+    queue.exists(_.id == playerId)
+  }
+
+  def isInGame(playerId: String): Boolean = {
+    games.exists(_.players.exists(_.id == playerId))
+  }
+
   def handleMessage(playerId: String, message: String): Unit = {
     message match {
       case ReceivedMessageType.START_MATCH =>
@@ -91,10 +99,18 @@ object TerisGameHolder {
 
   def matching(): Unit = {
     log("尝试匹配, 当前匹配玩家数: " + queue.size)
-    while (queue.size >= 3) {
+    while (queue.nonEmpty) {
+      var gamers = List[Player]()
+      if (queue.size >= 4) {
+        gamers = List(queue.remove(0), queue.remove(0), queue.remove(0), queue.remove(0))
+      } else if (queue.size > 1){
+        gamers = queue.toList
+        queue.clear()
+      } else {
+        log("匹配玩家不足，退出匹配")
+        return
+      }
       log("匹配成功，开始游戏")
-      // 取出前两个玩家进行匹配
-      val gamers = List(queue.remove(0), queue.remove(0), queue.remove(0))
       games += new TerisGame(gamers)
       gamers.foreach(player => {
         log(s"玩家 ${player.id} 进入游戏")

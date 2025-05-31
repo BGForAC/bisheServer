@@ -30,7 +30,7 @@ object WebSocketServer {
       case Some(actorRef) =>
         actorRef ! TextMessage(message)
       case None =>
-        println(s"Client $clientId not found in connections")
+        println(s"玩家 $clientId 未连接, 无法发送消息: $message")
     }
   }
 
@@ -49,6 +49,7 @@ object WebSocketServer {
         Source.actorRef[Message](bufferSize = 10, OverflowStrategy.dropHead)
           .mapMaterializedValue { actorRef =>
             connections.put(connectionId, actorRef)
+            log(s"玩家连接: $connectionId")
             actorRef
           }
 
@@ -74,6 +75,22 @@ object WebSocketServer {
       }
 
       Flow.fromSinkAndSource(incomingMessages, outgoingMessages)
+        .watchTermination() { (_, termination) =>
+          termination.onComplete { _ =>
+            val clientId = accounts.getOrElse(connectionId, "")
+            if (TerisGameHolder.isInQueue(clientId)) {
+              TerisGameHolder.removePlayer(clientId)
+              log(s"玩家 $clientId 从匹配队列中移除")
+            } else if (TerisGameHolder.isInGame(clientId)) {
+              TerisGameHolder.gameOver(clientId)
+              log(s"玩家 $clientId 从游戏中移除")
+            }
+
+            connections.remove(connectionId)
+            accounts.remove(connectionId)
+            log(s"玩家 $clientId 断开连接, 链接id: $connectionId")
+          }(GameServer.executionContext)
+        }
     }
 
     val route =
@@ -81,15 +98,13 @@ object WebSocketServer {
         extractClientIP { clientIP =>
           handleWebSocketMessages {
             val connectionId = UUID.randomUUID().toString
-            val flow = createWebsocketHandler(connectionId)
-            println(s"Client connected: $connectionId")
-            flow
+            createWebsocketHandler(connectionId)
           }
         }
       }
 
     val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
-    println(s"WebSocket server online at ws://localhost:8080/ws")
+    log(s"WebSocket server online at ws://localhost:8080/ws")
 
     system.scheduler.scheduleWithFixedDelay(initialDelay = 0.seconds, delay = 5.seconds) {
       () => heartbeat()
@@ -111,7 +126,6 @@ object WebSocketServer {
       }
       // 打印当前连接的玩家ID
       val playersId = TerisGameHolder.allPlayers()
-      println(s"Heartbeat: 当前正在匹配的玩家数量: ${playersId.size}, 玩家ID: ${playersId.mkString(", ")}")
       println(s"Heartbeat: 当前连接的数量：${connections.size}, 当前登录的玩家数量: ${accounts.size}, 玩家ID: ${accounts.values.mkString(", ")}")
     }
   }
